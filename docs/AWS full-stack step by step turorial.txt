@@ -1,0 +1,536 @@
+AWS Full-stack step by step tutorial
+https://www.youtube.com/watch?v=ADDG7LLS5IM
+
+Introduction
+	1. install node.js
+	2. use VS code
+	3. Postgresql or A5M2 ( but we will use for now DBeaver )
+	4. postman ( API )
+	5. Git ( version control )
+
+	※ EC2 - virtual servers
+	※ Lambda - serverless servers
+
+When recreating RDS 
+	Delete Aurora and RDS
+		database
+			Actions
+				Delete
+	Do the step 2. > Summary
+				
+Setup (AWS)
+1. bills
+2. RDS (Aurora and RDS) I will use MySQL to store data ( RDS LAYER FOR STATIC DATA, EVENTS DETAILS)
+	Choose region Asia Pacific Singapore
+	Free tier
+	DB instance identifier - event-rsvp-db
+	master username - admin
+	master password - adminPassword01
+	addition configuration
+		Initial Database Name : eventsdb
+	
+	don't connect to EC2 computer resource
+	
+	setup security group
+		open security group id
+		edit inboud rules
+		delete default security group
+		create a new 
+		setup your own IP address if you want only you can access
+		
+	Test DB connection
+		create a new DB
+		choose MySql
+		choose connect by URL
+			in AWS, choose endpoint
+			select Endpoint
+			back to DBeaver
+			URL: jdbc:mysql://event-rsvp-db.cnsco4eyonye.ap-southeast-1.rds.amazonaws.com/{initial Database Name}
+			URL Sample: jdbc:mysql://event-rsvp-db.cnsco4eyonye.ap-southeast-1.rds.amazonaws.com/eventsdb
+			add credentials username and password
+			Click Driver properties : allowPublicKeyRetrieval : true
+		Click connection details
+			connection name : events-rsvp-sql
+		※ connection error
+			reason 1: Publicly accessible : No
+			solution 1 : 
+				click Modify
+				Connectivity
+					additional configuration
+					Public access : change to publicly accesible
+					Apply immediately
+			Error 2 : Public Key Retrieval is not allowed
+			Solution 2 : Click Driver properties : allowPublicKeyRetrieval : true
+			Error 3: Unknown database 'eventsdb'
+			Solution 3 : Create a database in the DBeaver : eventsdb
+	
+	In DBeaver, Click SQL,
+		CREATE TABLE events (
+			event_id 	VARCHAR(64) PRIMARY KEY,
+			title 		VARCHAR(200) NOT NULL,
+			description TEXT,
+			start_at	DATETIME NOT NULL,
+			venue		VARCHAR(200),
+			banner_url	VARCHAR(500),
+			created_at	TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+	
+		SELECT * FROM events;
+
+		INSERT INTO events (event_id, title, description, start_at, venue, banner_url)
+		VALUES 
+		(
+			'aws-meetup-manila-2025',
+			'AWS User Group Manila Monthly Meetup 2025',
+			'Join fellow builders for lightning talks, live demos, and networking with AWS enthusiasts in Manila.',
+			'2025-10-18 18:00:00',
+			'AWS PH Office, Bonifacio Global City',
+			''
+		),
+		(
+			'aws-buildercards-tournament-2025',
+			'AWS BuilderCards Tournament 2025',
+			'Learn all about AWS BuilderCards',
+			'2025-11-18 17:00:00',
+			'AWS PH Office, Bonifacio Global City',
+			''
+		);
+		
+		Summary : Much cleaner setup:
+		1. AWS Aurora and RDS
+			- Create database
+			- Engine Options : Choose MySql
+			- Choose a database creation method : Full Configuration
+			- Templates : Free Tier
+			- Availability and durability : Single-AZ
+			- DB Instance Identifier : Choose any name: Sample: event-rsvp-db
+			- Master username and password
+			- Instance type : db.t3.micro
+			- Connectivity : Choose Don't connect to EC2 computer resource
+			- Connectivity : Public access : Yes
+			- Additional Configuration : initial Database Name : eventsdb
+			- Create Database
+			
+		2. Setup security group ( only once when you created new AWS ) can be skip when recreating database
+			open security group id
+			edit inboud rules
+			delete default security group
+			create a new 
+			setup your own IP address if you want only you can access
+		
+		3. Test DB connection
+		4. Create Table and insert data
+		
+3. AMAZON dynamoDB ( NoSQL )
+	Create a table
+		table name : event-rsvp-responses
+		Partion Key : pk
+		Sork key: sk
+		Create table
+		
+		Explanation
+			PK is for Folder name : Event
+			SK is inside the folder and act as a File name : Respondent and Response
+			
+4. Lambda ( brain of the app, The backend )
+	Create a function
+		- author from scratch
+		- function name : event-rsvp-handler
+		Create a function
+	click the event
+		- go to Configuration
+			- Click Edit
+			- Increase timeout 3secs > 30 secs
+			- Click Save
+		- go to Environment Variables
+			- Click Edit
+			- Add the following:
+				- DB_HOST : event-rsvp-db.cnsco4eyonye.ap-southeast-1.rds.amazonaws.com
+				- DB_USER : admin
+				- DB_PASS : adminPassword01
+				- DB_NAME : eventsdb
+				- REGION  : ap-southeast-1
+			- Click Save
+		- go to Permissions
+			- Click Role Name ( in order to connect RDS and Dynamo DB )
+				- Add Permissions
+					- attach Policies
+						-awslambdavp
+						-AmazonDynamoDBFullAccess
+						-AmazonDynamoDBFullAccess_v2
+		- go to VPC
+			- Click Edit
+				- Select VPC ( where RDS lives )
+				- Select All subnets
+				- Select Security Groups
+			- Click save
+		- go to Code
+			- source code path : D:\Personal_File\03_Programming\AWS fullstack deployment
+			- backup path : D:\Personal_File\03_Programming\EVENT-RSVP-HANDLER
+			- paste the code below : 
+				//Section 1
+				import mysql from "mysql2/promise";
+				import {
+				  DynamoDBClient,
+				  BatchGetItemCommand,
+				  UpdateItemCommand,
+				  PutItemCommand,
+				  QueryCommand,
+				  TransactWriteItemsCommand,
+				} from "@aws-sdk/client-dynamodb";
+
+				const dynamo = new DynamoDBClient({ region: process.env.REGION });
+
+				//Section 2
+				export const handler = async (event) => {
+				  console.log("Received event: ", JSON.stringify(event, null, 2));
+
+				  const method = event.requestContext.http.method;
+				  const path = event.requestContext.http.path;
+				  const pathParams = event.pathParameters || {};
+				  const queryParams = event.queryStringParameters || {};
+				  const body = event.body ? JSON.parse(event.body) : {};
+
+				  // Section 3
+				  if (method === "OPTIONS") {
+				    return {
+				      statusCode: 200,
+				      headers: {
+				        "Access-Control-Allow-Origin": "*",
+				        "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+				        "Access-Control-Allow-Headers":
+				          "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Requested-With",
+				        "Access-Control-Allow-Credentials": true,
+				      },
+				      body: "",
+				    };
+				  }
+
+				  //Section 4
+				  const conn = await mysql.createConnection({
+				    host: process.env.DB_HOST,
+				    user: process.env.DB_USER,
+				    password: process.env.DB_PASS,
+				    database: process.env.DB_NAME,
+				  });
+
+				  try {
+				    // ==========[1] GET /event/{event_id} ============
+				    if (method === "GET" && path.startsWith("/event/")) {
+				      const eventId = pathParams.event_id;
+				      console.log("Looking for event ID:", eventId);
+
+				      const [rows] = await conn.execute(
+				        "SELECT * FROM events WHERE event_id = ?",
+				        [eventId],
+				      );
+				      if (rows.length === 0) {
+				        return json(
+				          {
+				            message: "Event not found",
+				          },
+				          404,
+				        );
+				      }
+				      return json({
+				        event: rows[0],
+				      });
+				    }
+
+				    // ==========[2] GET /stats/{event_id} ===========
+				    if (method === "GET" && path.startsWith("/stats/")) {
+				      const eventId = pathParams.event_id;
+				      console.log("Getting stats for:", eventId);
+
+				      const responses = ["Yes", "No"];
+				      const keys = responses.map((r) => ({
+				        pk: { S: `EVENT#${eventId}` },
+				        sk: { S: `RESPONSE#${r}` },
+				      }));
+
+				      const result = await dynamo.send(
+				        new BatchGetItemCommand({
+				          RequestItems: {
+				            "event-rsvp-responses": {
+				              Keys: keys,
+				            },
+				          },
+				        }),
+				      );
+
+				      const items = result.Responses?.["event-rsvp-responses"] || [];
+				      const counts = { Yes: 0, No: 0 };
+				      for (const item of items) {
+				        const key = item.sk.S.split("#")[1];
+				        counts[key] = Number(item.count?.N || 0);
+				      }
+
+				      return json(counts);
+				    }
+
+				    // ==========[3] POST /rsvp ===========
+				    if (method === "POST" && path === "/rsvp") {
+				      const { event_id, full_name, email, response } = body;
+				      console.log("RSVP request", { event_id, full_name, email, response });
+
+				      if (!event_id || !full_name || !email || !response) {
+				        return json(
+				          {
+				            error:
+				              "Missing required fields. Email is required to prevent duplicate RSVPs.",
+				          },
+				          400,
+				        );
+				      }
+
+				      const now = Date.now();
+
+				      try {
+				        // 1. Put the attendee record if it doesn't exist yet
+				        // 2. Increment the right counter (Yes/No) atomically
+				        await dynamo.send(
+				          new TransactWriteItemsCommand({
+				            TransactItems: [
+				              {
+				                Put: {
+				                  TableName: "event-rsvp-responses",
+				                  Item: {
+				                    pk: { S: `EVENT#${event_id}` },
+				                    sk: { S: `RESPONDENT#${email}` }, // uniqeness per event+email
+				                    full_name: { S: full_name },
+				                    email: { S: email },
+				                    response: { S: response },
+				                    timestamp: { N: now.toString() },
+				                  },
+				                  ConditionExpression:
+				                    "attribute_not_exists(pk) AND attribute_not_exists(sk)", // Only insert if it doesn't exist yet
+				                },
+				              },
+				              {
+				                Update: {
+				                  TableName: "event-rsvp-responses",
+				                  Key: {
+				                    pk: { S: `EVENT#${event_id}` },
+				                    sk: { S: `RESPONSE#${response}` },
+				                  },
+				                  UpdateExpression: "ADD #count :one",
+				                  ExpressionAttributeNames: { "#count": "count" },
+				                  ExpressionAttributeValues: { ":one": { N: "1" } },
+				                },
+				              },
+				            ],
+				          }),
+				        );
+
+				        return json({ message: "RSVP recorded successfully" }, 200);
+				      } catch (err) {
+				        if (
+				          err.name === "TransactionCanceledException" ||
+				          err.name === "ConditionalCheckFailedException"
+				        ) {
+				          // Put failed because RESPONDENT already Exists
+				          return json(
+				            { message: "You have already RSVPed.", code: "DUPLICATE_RSVP" },
+				            409,
+				          );
+				        }
+				        console.error("DynamoDB error:", err);
+				        return json({ error: err.message }, 500);
+				      }
+				    }
+
+				    // ==========[4] GET /attendees/{event_id} ===========
+				    if (method === "GET" && path.startsWith("/attendees/")) {
+				      const eventId = pathParams.event_id;
+				      const responseType = queryParams.response; // Optional filter
+
+				      let keyCondition = "pk = :pk AND begins_with(sk, :prefix)";
+				      let expressionValues = {
+				        ":pk": { S: `EVENT#${eventId}` },
+				        ":prefix": { S: "RESPONDENT#" },
+				      };
+
+				      // Filter by response type if provided
+				      if (responseType) {
+				        keyCondition = "pk = :pk AND begins_with(sk, :prefix)";
+				        expressionValues[":prefix"] = { S: `RESPONDENT#` };
+				      }
+
+				      const result = await dynamo.send(
+				        new QueryCommand({
+				          TableName: "event-rsvp-responses",
+				          KeyConditionExpression: keyCondition,
+				          ExpressionAttributeValues: expressionValues,
+				        }),
+				      );
+
+				      let attendees = result.Items.map((item) => ({
+				        full_name: item.full_name?.S,
+				        email: item.email?.S,
+				        response: item.response?.S,
+				        timestamp: parseInt(item.timestamp?.N),
+				      }));
+
+				      // Filter by response type if specified
+				      if (responseType) {
+				        attendees = attendees.filter((a) => a.response === responseType);
+				      }
+
+				      return json(attendees);
+				    }
+
+				    // ============[5] GET /events ===========
+				    if (method === "GET" && path === "/events") {
+				      console.log("Fetching all events");
+				      const [rows] = await conn.execute(`
+				        SELECT event_id, title, description, start_at, venue, banner_url, created_at
+				        FROM events 
+				        ORDER BY start_at ASC     
+				      `);
+				      return json(rows);
+				    }
+
+				    // =========== Fallback =========
+				    return json({ error: "Route not found" }, 404);
+				  } catch (err) {
+				    console.error("Error:", err);
+				    return json({ error: err.message }, 500);
+				  } finally {
+				    if (conn) await conn.end();
+				  }
+				};
+
+				// Helper function for consistent JSON responses
+				function json(data, statusCode = 200) {
+				  return {
+				    statusCode,
+				    headers: {
+				      "Access-Control-Allow-Origin": "*",
+				      "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+				      "Access-Control-Allow-Headers":
+				        "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Requested-With",
+				      "Access-Control-Allow-Credentials": true,
+				      "Content-Type": "application/json",
+				    },
+				    body: JSON.stringify(data),
+				  };
+				}
+
+		Add trigger
+			- Choose API Gateway
+5. API Gateway 
+	Create an API
+		- Choose HTTP API
+			- Click Build
+				- API name : event-rsvp-api
+				- Integrations : Lambda function
+					- Get the lambda you've created
+			- Click Next
+			- Add route
+				- Get - /events
+				- Get - /event/{event_id}
+				- Post - /rsvp
+				- Get - /stats/{event_id}
+				- Get - /attendees/{event_id}
+			- Click Next
+			- Click Next
+			- Click Create
+		- go to CORS ( put a wild card )
+			- Click configure
+			- Access-Control-Allow-Origin : *
+			- Access-Control-Allow-Headers : content-type, x-amz-date, authorization, x-api-key, x-amz-security-token
+			- Access-Control-Allow-Methods : *
+			- Click Save
+	Test Api
+		- Open Postman
+		- Create a collection
+			- name : event-rsvp
+			- new request GET
+				- copy API endpoint 
+				- paste
+				- enter
+				- Produce error
+				- Go to cloudwatch
+					- go to Logs
+					- module mysql2 not found
+	
+	Open VS Code
+		- create index.js and paste the lambda code
+		- create package.json ( list of dependencies )
+			- {
+				  "name": "rsvp-backend",
+				  "type": "module",
+				  "version": "1.0.0",
+				  "dependencies": {
+				    "mysql2": "^3.11.0",
+				    "@aws-sdk/client-dynamodb": "^3.679.0"
+				  }
+				}
+		- open terminal
+		- type : npm install
+		( node_modules was created ) all downloaded packages
+		- in terminal, type : ls
+		- create a zip file
+			-  zip -r rsvp-backend.zip . ( for mac )
+			- Compress-Archive -Path .\* -DestinationPath .\rsvp-backend.zip -Force ( for windows )
+			- ( rsvp-backend.zip file will be created )
+			- check and run Test-Path .\node_modules\mysql2 if true
+	Back to AWS Lambda
+		- Click upload From
+			- upload zip file and save
+	Add another Security Group ( connect Lambda and Aurora and RDS via Security Group )
+		- MySQL/AURORA
+		- Paste the Lambda VPC security Group
+	When tyring POST, dynamodb access erro will display so,
+	DynamoDB cannot connect because it is a public 
+		- Go to VPC 
+		- Go to Endpoints
+			- create endpoints
+				- type : AWS services
+				- Services : dynamodb type gateway
+				- VPC : choose the existing
+				- Route tables : check
+	When try again, "message": "RSVP recorded successfully"
+6. Creating the frontend
+	- run in the terminal
+		- python3 -m http.server 8000
+	- for javascript
+		- Go to api gateway
+		- Copy the endpoint : https://oh9ci9wdr7.execute-api.ap-southeast-1.amazonaws.com
+		- Paste it in the API_BASE_URL
+7. S3 Bucket ( this is where we will put the frontend )
+	- Create a bucket 
+		- Check the region
+		- bucket name : event-rsvp-v1-bucket
+		- Create bucket
+			- Upload frontend files (html,css,js)
+		- Create a folder for banners 
+			- Folder name : banners
+		- Click banner
+			- upload banner images here ( for now, None )
+8. CloudFront
+	- Create distribution
+		- Distribution name : event-rsvp-cloudfront
+		- Click next
+		- Origin type : Amazon S3
+		- S3 Origin : Click Browse S3 > choose created bucket
+		- Click Next 
+		- Do not enable WAF
+		- Create Distribution
+	- Testing
+		- copy distribution domain name
+		- paste to url and add /index.html : d2e1am4xdi4akq.cloudfront.net/index.html
+	- Change the route object
+		- Settings > Edit
+		- Default root object - optional : index.html
+		- Save changes
+		
+9. Clean up
+	- DynamoDb
+	- Aurora and RDS
+	- CloudFront > Disable > Delete
+	- API Gateway > click routes > delete each > delete entirely
+	- Lambda 
+	- IAM Roles > event-rsvp-handler roles
+	- S3 > delete each > delete the bucket
+	- Cloudwatch > Log management > delete /aws/lambda/event-rsvp-handler

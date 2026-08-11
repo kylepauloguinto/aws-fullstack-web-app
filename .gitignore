@@ -1,0 +1,5 @@
+node_modules/
+rsvp-backend.zip
+.env
+.env.*
+!.env.example
