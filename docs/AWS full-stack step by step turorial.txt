@@ -534,3 +534,14 @@ Setup (AWS)
 	- IAM Roles > event-rsvp-handler roles
 	- S3 > delete each > delete the bucket
 	- Cloudwatch > Log management > delete /aws/lambda/event-rsvp-handler
+
+
+Skills acquired
+- Using Postman IDE (for Api testing)
+- Using DBeaver IDE (for MySQL database)
+- What is CloudFront (for deploying code outside localhost)
+- Using of S3 Buckets (for hosting Frontend codes and called by CloudFront)
+- Using Api Gateway (for interaction of Frontend and Backend)
+- Using Lambda (For backend and trigger only when needed)
+- DynamoDb ( NoSQl )
+- MySql (Static Database)
